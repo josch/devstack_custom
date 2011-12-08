@@ -17,10 +17,6 @@ export NOVA_PROJECT_ID=${TENANT:-demo}
 # the action as the **user**.
 export NOVA_USERNAME=${USERNAME:-demo}
 
-# With Keystone you pass the keystone password instead of an api key.
-# The most recent versions of novaclient use NOVA_PASSWORD instead of NOVA_API_KEY
-export NOVA_PASSWORD=${ADMIN_PASSWORD:-secrete}
-
 # With the addition of Keystone, to use an openstack cloud you should
 # authenticate against keystone, which returns a **Token** and **Service
 # Catalog**.  The catalog contains the endpoint for all services the user/tenant

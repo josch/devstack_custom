@@ -126,14 +126,13 @@ fi
 # Set the destination directories for openstack projects
 NOVA_DIR=$DEST/nova
 GLANCE_DIR=$DEST/glance
-KEYSTONE_DIR=$DEST/keystone
 NOVACLIENT_DIR=$DEST/python-novaclient
 
 # Default Quantum Plugin
 Q_PLUGIN=${Q_PLUGIN:-openvswitch}
 
 # Specify which services to launch.  These generally correspond to screen tabs
-ENABLED_SERVICES=${ENABLED_SERVICES:-g-api,g-reg,key,n-api,n-cpu,n-net,n-sch,mysql,rabbit}
+ENABLED_SERVICES=${ENABLED_SERVICES:-g-api,g-reg,n-api,n-cpu,n-net,n-sch,mysql,rabbit}
 
 # Name of the lvm volume group to use/create for iscsi volumes
 VOLUME_GROUP=${VOLUME_GROUP:-nova-volumes}
@@ -275,14 +274,9 @@ read_password RABBIT_PASSWORD "ENTER A PASSWORD TO USE FOR RABBIT."
 # Glance connection info.  Note the port must be specified.
 GLANCE_HOSTPORT=${GLANCE_HOSTPORT:-$HOST_IP:9292}
 
-# Keystone
-# --------
-
 # Service Token - Openstack components need to have an admin token
 # to validate user tokens.
 read_password SERVICE_TOKEN "ENTER A SERVICE_TOKEN TO USE FOR THE SERVICE ADMIN TOKEN."
-# Horizon currently truncates usernames and passwords at 20 characters
-read_password ADMIN_PASSWORD "ENTER A PASSWORD TO USE FOR HORIZON AND KEYSTONE (20 CHARS OR LESS)."
 
 LOGFILE=${LOGFILE:-"$PWD/stack.sh.$$.log"}
 (
@@ -334,10 +328,6 @@ function get_packages() {
         elif [[ $service == g-* ]]; then
             if [[ ! $file_to_parse =~ glance ]]; then
                 file_to_parse="${file_to_parse} glance"
-            fi
-        elif [[ $service == key* ]]; then
-            if [[ ! $file_to_parse =~ keystone ]]; then
-                file_to_parse="${file_to_parse} keystone"
             fi
         fi
     done
@@ -422,14 +412,6 @@ git_clone $NOVA_REPO $NOVA_DIR $NOVA_BRANCH
 # python client library to nova that horizon (and others) use
 git_clone $NOVACLIENT_REPO $NOVACLIENT_DIR $NOVACLIENT_BRANCH
 
-# glance, swift middleware and nova api needs keystone middleware
-if [[ "$ENABLED_SERVICES" =~ "key" ||
-      "$ENABLED_SERVICES" =~ "g-api" ||
-      "$ENABLED_SERVICES" =~ "n-api" ||
-      "$ENABLED_SERVICES" =~ "swift" ]]; then
-    # unified auth system (manages accounts/tokens)
-    git_clone $KEYSTONE_REPO $KEYSTONE_DIR $KEYSTONE_BRANCH
-fi
 if [[ "$ENABLED_SERVICES" =~ "g-api" ||
       "$ENABLED_SERVICES" =~ "n-api" ]]; then
     # image catalog service
@@ -442,12 +424,6 @@ fi
 
 # setup our checkouts so they are installed into python path
 # allowing ``import nova`` or ``import glance.client``
-if [[ "$ENABLED_SERVICES" =~ "key" ||
-      "$ENABLED_SERVICES" =~ "g-api" ||
-      "$ENABLED_SERVICES" =~ "n-api" ||
-      "$ENABLED_SERVICES" =~ "swift" ]]; then
-    cd $KEYSTONE_DIR; sudo python setup.py develop
-fi
 if [[ "$ENABLED_SERVICES" =~ "g-api" ||
       "$ENABLED_SERVICES" =~ "n-api" ]]; then
     cd $GLANCE_DIR; sudo python setup.py develop
@@ -716,30 +692,6 @@ if [[ "$ENABLED_SERVICES" =~ "mysql" ]]; then
 fi
 
 
-# Keystone
-# --------
-
-if [[ "$ENABLED_SERVICES" =~ "key" ]]; then
-    # (re)create keystone database
-    mysql -u$MYSQL_USER -p$MYSQL_PASSWORD -e 'DROP DATABASE IF EXISTS keystone;'
-    mysql -u$MYSQL_USER -p$MYSQL_PASSWORD -e 'CREATE DATABASE keystone;'
-
-    # Configure keystone.conf
-    KEYSTONE_CONF=$KEYSTONE_DIR/etc/keystone.conf
-    cp $FILES/keystone.conf $KEYSTONE_CONF
-    sudo sed -e "s,%SQL_CONN%,$BASE_SQL_CONN/keystone,g" -i $KEYSTONE_CONF
-    sudo sed -e "s,%DEST%,$DEST,g" -i $KEYSTONE_CONF
-
-    # keystone_data.sh creates our admin user and our ``SERVICE_TOKEN``.
-    KEYSTONE_DATA=$KEYSTONE_DIR/bin/keystone_data.sh
-    cp $FILES/keystone_data.sh $KEYSTONE_DATA
-    sudo sed -e "s,%HOST_IP%,$HOST_IP,g" -i $KEYSTONE_DATA
-    sudo sed -e "s,%SERVICE_TOKEN%,$SERVICE_TOKEN,g" -i $KEYSTONE_DATA
-    sudo sed -e "s,%ADMIN_PASSWORD%,$ADMIN_PASSWORD,g" -i $KEYSTONE_DATA
-    # initialize keystone with default users/endpoints
-    ENABLED_SERVICES=$ENABLED_SERVICES BIN_DIR=$KEYSTONE_DIR/bin bash $KEYSTONE_DATA
-fi
-
 
 # Launch Services
 # ===============
@@ -781,16 +733,6 @@ if [[ "$ENABLED_SERVICES" =~ "g-api" ]]; then
     echo "Waiting for g-api ($GLANCE_HOSTPORT) to start..."
     if ! timeout $SERVICE_TIMEOUT sh -c "while ! wget -q -O- http://$GLANCE_HOSTPORT; do sleep 1; done"; then
       echo "g-api did not start"
-      exit 1
-    fi
-fi
-
-# launch the keystone and wait for it to answer before continuing
-if [[ "$ENABLED_SERVICES" =~ "key" ]]; then
-    screen_it key "cd $KEYSTONE_DIR && $KEYSTONE_DIR/bin/keystone --config-file $KEYSTONE_CONF -d"
-    echo "Waiting for keystone to start..."
-    if ! timeout $SERVICE_TIMEOUT sh -c "while ! wget -q -O- http://127.0.0.1:5000; do sleep 1; done"; then
-      echo "keystone did not start"
       exit 1
     fi
 fi
@@ -895,14 +837,6 @@ for ret in "${PIPESTATUS[@]}"; do [ $ret -eq 0 ] || exit $ret; done
 echo ""
 echo ""
 echo ""
-
-# If keystone is present, you can point nova cli to this server
-if [[ "$ENABLED_SERVICES" =~ "key" ]]; then
-    echo "keystone is serving at http://$HOST_IP:5000/v2.0/"
-    echo "examples on using novaclient command line is in exercise.sh"
-    echo "the default users are: admin and demo"
-    echo "the password: $ADMIN_PASSWORD"
-fi
 
 # indicate how long this took to run (bash maintained variable 'SECONDS')
 echo "stack.sh completed in $SECONDS seconds."
